@@ -225,9 +225,11 @@ public class Language {
         phrases.put(Phrase.ROLLBACK_CHUNKS_FOUND, "Found {0} {chunk|chunks} to modify.");
         phrases.put(Phrase.ROLLBACK_CHUNKS_MODIFIED, "Modified {0}/{1} {chunk|chunks}.");
         phrases.put(Phrase.ROLLBACK_COMPLETED, "{Rollback|Restore|Preview} completed for \"{0}\".");
+        phrases.put(Phrase.ROLLBACK_DROPS_SKIPPED, "Skipped {0} item {row|rows} in \"{1}\"; enable \"item-pickups\" to roll them back without duplicating items.");
         phrases.put(Phrase.ROLLBACK_EXCLUDED_USERS, "Excluded {user|users}: \"{0}\".");
         phrases.put(Phrase.ROLLBACK_INCLUDE, "{Included|Excluded} {block|entity|target} {type|types}: \"{0}\".");
         phrases.put(Phrase.ROLLBACK_IN_PROGRESS, "A rollback/restore is already in progress.");
+        phrases.put(Phrase.ROLLBACK_INVENTORY_INCOMPLETE, "Unable to apply {0} inventory {change|changes} for \"{1}\".");
         phrases.put(Phrase.ROLLBACK_LENGTH, "Time taken: {0} {second|seconds}.");
         phrases.put(Phrase.ROLLBACK_MODIFIED, "{Modified|Modifying} {0}.");
         phrases.put(Phrase.ROLLBACK_RADIUS, "Radius: {0} {block|blocks}.");
