@@ -224,6 +224,15 @@ public final class EntityDeathListener extends Queue implements Listener {
             }
         }
 
+        // Attribute indirect kills (fire, lava, explosions the player triggered) to the
+        // player Minecraft's own combat tracker credits, so they remain rollback-able by name.
+        if (!(damage instanceof EntityDamageByEntityEvent) && (e.length() == 0 || e.startsWith("#"))) {
+            Player killer = entity.getKiller();
+            if (killer != null) {
+                e = killer.getName();
+            }
+        }
+
         if (entity instanceof ArmorStand) {
             Location entityLocation = entity.getLocation();
             if (!Config.getConfig(entityLocation.getWorld()).ITEM_TRANSACTIONS) {

@@ -7,6 +7,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -41,6 +42,7 @@ import net.coreprotect.model.action.EntityActionFilter;
 import net.coreprotect.model.action.LookupActions;
 import net.coreprotect.model.entity.EntitySpawnRecord;
 import net.coreprotect.model.item.InventorySources;
+import net.coreprotect.model.item.ItemTransactionActions;
 import net.coreprotect.model.rollback.RollbackUpdateTargets;
 import net.coreprotect.paper.PaperAdapter;
 import net.coreprotect.thread.Scheduler;
@@ -222,6 +224,10 @@ public class Rollback extends RollbackUtil {
                 if (containerRecords.size() != entityContainerTrackingRowIds.size()) {
                     warnMissingEntityRows("Skipping entity container rows with missing tracking data", entityContainerTrackingRowIds, containerRecords.keySet());
                 }
+            }
+
+            if (inventoryRollback && rollbackType == 0) {
+                dropUntrackedItemDropRows(itemList, user);
             }
 
             LinkedHashSet<Integer> worldList = new LinkedHashSet<>();
@@ -429,6 +435,52 @@ public class Rollback extends RollbackUtil {
                 chunkList.put(chunkKey, distance);
             }
             worldList.add(worldId);
+        }
+    }
+
+    /**
+     * Drops item rows an inventory rollback can't undo without duplicating the items.
+     * <p>
+     * Undoing a drop gives the item back, which is only correct if the matching pickup is undone as
+     * well. With "item-pickups" disabled the log holds the minus side of every death but never the
+     * plus side of the player collecting the loot again, so each death cycle would hand out another
+     * copy. Shot arrows land in the same trap: they are logged on release and recovered through the
+     * pickup listener that flag turns off. The rows are dropped here rather than skipped during
+     * processing because everything left in the list is flagged as rolled back before any of it is
+     * applied, which would make the skipped rows unrecoverable and let a later restore remove items
+     * that were never given back.
+     * <p>
+     * Death drops share the logging path of manual drops, so they can't be told apart here and a
+     * drop the player never recovered is skipped along with the rest. The current world config is
+     * what's checked, not the one in effect when the row was logged, so toggling "item-pickups"
+     * changes what an existing time range rolls back.
+     */
+    private static void dropUntrackedItemDropRows(List<Object[]> itemList, CommandSender user) {
+        Map<String, Integer> skippedByWorld = new LinkedHashMap<>();
+        Iterator<Object[]> rowIterator = itemList.iterator();
+        while (rowIterator.hasNext()) {
+            Object[] row = rowIterator.next();
+            int rowAction = (Integer) row[8];
+            if (rowAction != ItemTransactionActions.DROP && rowAction != ItemTransactionActions.SHOOT) {
+                continue;
+            }
+
+            String worldName = WorldUtils.getWorldName((Integer) row[10]);
+            if (worldName.isEmpty() || Config.getConfig(worldName).ITEM_PICKUPS) {
+                continue;
+            }
+
+            rowIterator.remove();
+            skippedByWorld.merge(worldName, 1, Integer::sum);
+        }
+
+        for (Entry<String, Integer> skipped : skippedByWorld.entrySet()) {
+            int count = skipped.getValue();
+            String message = Phrase.build(Phrase.ROLLBACK_DROPS_SKIPPED, String.valueOf(count), (count == 1 ? Selector.FIRST : Selector.SECOND), skipped.getKey());
+            Chat.console(message);
+            if (user instanceof Player) {
+                Chat.sendMessage(user, Color.DARK_AQUA + "CoreProtect " + Color.WHITE + "- " + message);
+            }
         }
     }
 

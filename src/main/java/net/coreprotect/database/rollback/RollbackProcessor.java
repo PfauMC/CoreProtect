@@ -31,12 +31,17 @@ import net.coreprotect.CoreProtect;
 import net.coreprotect.bukkit.BukkitAdapter;
 import net.coreprotect.config.Config;
 import net.coreprotect.config.ConfigHandler;
+import net.coreprotect.language.Phrase;
+import net.coreprotect.language.Selector;
 import net.coreprotect.listener.player.InventoryChangeListener;
 import net.coreprotect.model.BlockGroup;
 import net.coreprotect.model.PendingBlockChange;
 import net.coreprotect.model.item.ItemTransactionActions;
+import net.coreprotect.paper.PaperAdapter;
 import net.coreprotect.thread.Scheduler;
 import net.coreprotect.utility.BlockUtils;
+import net.coreprotect.utility.Chat;
+import net.coreprotect.utility.Color;
 import net.coreprotect.utility.ItemUtils;
 import net.coreprotect.utility.MaterialUtils;
 import net.coreprotect.utility.Teleport;
@@ -229,6 +234,7 @@ public class RollbackProcessor {
 
             // Process container items
             Map<Player, List<Integer>> sortPlayers = new HashMap<>();
+            Map<Player, List<Runnable>> inventoryTasks = new LinkedHashMap<>();
             Object container = null;
             Material containerType = null;
             boolean containerInit = false;
@@ -279,16 +285,21 @@ public class RollbackProcessor {
                         int action = rollbackType == 0 ? (inventoryAction ^ 1) : inventoryAction;
                         ItemStack itemstack = new ItemStack(inventoryItem, rowAmount);
                         Object[] populatedStack = RollbackItemHandler.populateItemStack(itemstack, rowMetadata);
-                        if (rowAction == ItemTransactionActions.REMOVE_ENDER || rowAction == ItemTransactionActions.ADD_ENDER) {
-                            RollbackUtil.modifyContainerItems(containerType, player.getEnderChest(), (Integer) populatedStack[0], ((ItemStack) populatedStack[2]).clone(), action ^ 1);
+                        final Material rowContainerType = containerType;
+                        final int rowSlot = (Integer) populatedStack[0];
+                        final ItemStack rowItem = (ItemStack) populatedStack[2];
+                        final int rowInventoryAction = action;
+                        final boolean enderTransaction = (rowAction == ItemTransactionActions.REMOVE_ENDER || rowAction == ItemTransactionActions.ADD_ENDER);
+                        final List<Integer> sortSlots = sortPlayers.computeIfAbsent(player, key -> new ArrayList<>());
+
+                        // A player's inventory may only be touched from the region that owns the player, which
+                        // isn't this one when the rollback is running on the region of the logged chunk. Only
+                        // those players are deferred; everyone else keeps being modified in place.
+                        if (isOffRegion(player)) {
+                            inventoryTasks.computeIfAbsent(player, key -> new ArrayList<>()).add(() -> applyInventoryRow(rowContainerType, player, rowSlot, rowItem, rowInventoryAction, enderTransaction, sortSlots));
                         }
-                        int modifiedArmor = RollbackUtil.modifyContainerItems(containerType, player.getInventory(), (Integer) populatedStack[0], (ItemStack) populatedStack[2], action);
-                        if (modifiedArmor > -1) {
-                            List<Integer> currentSortList = sortPlayers.getOrDefault(player, new ArrayList<>());
-                            if (!currentSortList.contains(modifiedArmor)) {
-                                currentSortList.add(modifiedArmor);
-                            }
-                            sortPlayers.put(player, currentSortList);
+                        else {
+                            applyInventoryRow(rowContainerType, player, rowSlot, rowItem, rowInventoryAction, enderTransaction, sortSlots);
                         }
 
                         counters.addItems(rowAmount);
@@ -370,15 +381,57 @@ public class RollbackProcessor {
             itemData.clear();
 
             for (Entry<Player, List<Integer>> sortEntry : sortPlayers.entrySet()) {
+                if (inventoryTasks.containsKey(sortEntry.getKey()) || sortEntry.getValue().isEmpty()) {
+                    continue; // deferred players are sorted once their batch reaches the owning region
+                }
+
                 RollbackItemHandler.sortContainerItems(sortEntry.getKey().getInventory(), sortEntry.getValue());
+            }
+
+            for (Entry<Player, List<Runnable>> taskEntry : inventoryTasks.entrySet()) {
+                Player player = taskEntry.getKey();
+                List<Runnable> playerTasks = taskEntry.getValue();
+                List<Integer> sortSlots = sortPlayers.get(player);
+
+                // The rows are flagged as rolled back before any of this runs, so changes that never reach
+                // the player have to be reported rather than dropped silently. The entity scheduler discards
+                // tasks once a player leaves, and refuses to accept them at all once it has retired, in which
+                // case neither callback is invoked. Disabling the plugin between here and the next tick is
+                // the one case the scheduler drops without running either callback.
+                Runnable report = () -> reportIncompleteInventory(finalUser, player, playerTasks.size());
+                Runnable guarded = () -> {
+                    try {
+                        playerTasks.forEach(Runnable::run);
+                        if (!sortSlots.isEmpty()) {
+                            RollbackItemHandler.sortContainerItems(player.getInventory(), sortSlots);
+                        }
+                    }
+                    catch (Exception e) {
+                        ErrorReporter.report(e);
+                        report.run();
+                    }
+                };
+
+                if (!PaperAdapter.ADAPTER.executeEntityTask(CoreProtect.getInstance(), player, guarded, report)) {
+                    report.run();
+                }
             }
             sortPlayers.clear();
 
             updateRollbackHash(finalUserString, counters, 1);
 
-            // Teleport players out of danger if they're within this chunk
-            if (preview == 0) {
+            // Teleport players out of danger if they're within this chunk. Inventory rollbacks file every
+            // row under a placeholder chunk key, so the coordinates here say nothing about where blocks
+            // changed and the check can only ever match a bystander standing in chunk 0,0.
+            if (preview == 0 && !inventoryRollback) {
                 for (Player player : Bukkit.getOnlinePlayers()) {
+                    // Reading a player's location is only legal from the region that owns them, and a
+                    // player standing in this chunk is owned by the region running this task, so
+                    // anyone we don't own can't be a match anyway.
+                    if (!PaperAdapter.ADAPTER.isOwnedByCurrentRegion(player)) {
+                        continue;
+                    }
+
                     Location playerLocation = player.getLocation();
                     String playerWorld = playerLocation.getWorld().getName();
                     int chunkX = playerLocation.getBlockX() >> 4;
@@ -396,6 +449,29 @@ public class RollbackProcessor {
             ErrorReporter.report(e);
             updateRollbackHash(finalUserString, counters, 2);
             return false;
+        }
+    }
+
+    private static boolean isOffRegion(Player player) {
+        return ConfigHandler.isFolia && !PaperAdapter.ADAPTER.isOwnedByCurrentRegion(player);
+    }
+
+    private static void applyInventoryRow(Material containerType, Player player, int slot, ItemStack item, int action, boolean enderTransaction, List<Integer> sortSlots) {
+        if (enderTransaction) {
+            RollbackUtil.modifyContainerItems(containerType, player.getEnderChest(), slot, item.clone(), action ^ 1);
+        }
+
+        int modifiedArmor = RollbackUtil.modifyContainerItems(containerType, player.getInventory(), slot, item, action);
+        if (modifiedArmor > -1 && !sortSlots.contains(modifiedArmor)) {
+            sortSlots.add(modifiedArmor);
+        }
+    }
+
+    private static void reportIncompleteInventory(Player user, Player player, int pending) {
+        String message = Phrase.build(Phrase.ROLLBACK_INVENTORY_INCOMPLETE, String.valueOf(pending), (pending == 1 ? Selector.FIRST : Selector.SECOND), player.getName());
+        Chat.console(message);
+        if (user != null) {
+            Chat.sendMessage(user, Color.DARK_AQUA + "CoreProtect " + Color.WHITE + "- " + message);
         }
     }
 
