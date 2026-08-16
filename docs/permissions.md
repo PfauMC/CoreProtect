@@ -24,6 +24,10 @@ The following permissions can be used to restrict functionality within the plugi
 * **coreprotect.teleport** *(default: op)*  
   Allows access to the CoreProtect teleport command.  
   &nbsp;
+* **coreprotect.teleport.spectator** *(default: false)*  
+  Allows access to the CoreProtect teleport command while in spectator mode only.  
+  Not granted by `coreprotect.teleport`; players holding `coreprotect.teleport` are not restricted by game mode.  
+  &nbsp;
 * **coreprotect.help** *(default: op)*  
   Allows access to the CoreProtect help command.  
   &nbsp;
