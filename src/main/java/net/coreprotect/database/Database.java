@@ -63,6 +63,7 @@ public class Database extends Queue {
     public static final int DATABASE_LOCK_INACTIVE = 0;
     public static final int DATABASE_LOCK_ACTIVE = 1;
     public static final int DATABASE_LOCK_MIGRATION_INCOMPLETE = 2;
+    public static final int DUCKDB_BLOCK_SIZE = 128 * 1024;
 
     private static final int ROLLED_BACK_UPDATE_BATCH_SIZE = 1000;
     private static final int DUCKDB_ROLLED_BACK_UPDATE_BATCH_SIZE = 5000;
@@ -140,6 +141,10 @@ public class Database extends Queue {
     }
 
     public static boolean commitTransactionChecked(Statement statement, DatabaseType databaseType) throws Exception {
+        return commitTransactionChecked(statement, databaseType, null);
+    }
+
+    public static boolean commitTransactionChecked(Statement statement, DatabaseType databaseType, Runnable onCommitAttempt) throws Exception {
         rejectClickHouseTransaction(databaseType);
         if (TRANSACTION_ROLLBACK_ONLY.get()) {
             if (databaseType.isDuckDB() && TRANSACTION_ROLLBACK_ACKNOWLEDGED.get()) {
@@ -154,6 +159,9 @@ public class Database extends Queue {
             try {
                 if (databaseType.isDuckDB()) {
                     Connection connection = statement.getConnection();
+                    if (onCommitAttempt != null) {
+                        onCommitAttempt.run();
+                    }
                     connection.commit();
                     try {
                         connection.setAutoCommit(true);
@@ -169,6 +177,9 @@ public class Database extends Queue {
                     }
                 }
                 else {
+                    if (onCommitAttempt != null) {
+                        onCommitAttempt.run();
+                    }
                     statement.executeUpdate(databaseType.isMySQL() ? "COMMIT" : "COMMIT TRANSACTION");
                 }
                 Consumer.transacting = false;
@@ -604,30 +615,6 @@ public class Database extends Queue {
         ClickHouseDatabase database = clickHouseDatabase;
         if (database != null) {
             database.cancelPurge();
-        }
-    }
-
-    public static void performRolledBackUpdate(Statement statement, int rolledBack, List<Long> rowIds, int table) {
-        String tableName = getRolledBackTableName(table);
-
-        try {
-            int listSize = rowIds.size();
-            int batchSize = getRolledBackUpdateBatchSize();
-            for (int startIndex = 0; startIndex < listSize; startIndex += batchSize) {
-                int endIndex = Math.min(startIndex + batchSize, listSize);
-                StringBuilder query = new StringBuilder("UPDATE " + ConfigHandler.prefix + tableName + " SET rolled_back='" + rolledBack + "' WHERE rowid IN(");
-                for (int index = startIndex; index < endIndex; index++) {
-                    if (index > startIndex) {
-                        query.append(",");
-                    }
-                    query.append(rowIds.get(index).longValue());
-                }
-                query.append(")");
-                statement.executeUpdate(query.toString());
-            }
-        }
-        catch (Exception e) {
-            handleWriteFailure(e);
         }
     }
 
