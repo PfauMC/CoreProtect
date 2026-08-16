@@ -1,6 +1,7 @@
 package net.coreprotect.command;
 
 import org.bukkit.Bukkit;
+import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.command.CommandSender;
@@ -28,6 +29,13 @@ public class TeleportCommand {
 
         if (!(player instanceof Player)) {
             Chat.sendMessage(player, Color.DARK_AQUA + "CoreProtect " + Color.WHITE + "- " + Phrase.build(Phrase.TELEPORT_PLAYERS));
+            return;
+        }
+
+        // "coreprotect.teleport.spectator" only grants the command while in spectator mode;
+        // "coreprotect.teleport" carries no such restriction and takes precedence when both are held.
+        if (!player.hasPermission("coreprotect.teleport") && ((Player) player).getGameMode() != GameMode.SPECTATOR) {
+            Chat.sendMessage(player, Color.DARK_AQUA + "CoreProtect " + Color.WHITE + "- " + Phrase.build(Phrase.TELEPORT_SPECTATOR_ONLY));
             return;
         }
 

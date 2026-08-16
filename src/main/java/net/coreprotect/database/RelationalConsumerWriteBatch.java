@@ -51,6 +51,7 @@ public final class RelationalConsumerWriteBatch implements ConsumerWriteBatch {
     private PreparedStatement entitySpawnStatement;
     private PreparedStatement entitySpawnBlockLinkStatement;
     private PreparedStatement entitySpawnCheckpointStatement;
+    private PreparedStatement entitySpawnCheckpointStateStatement;
     private PreparedStatement entityInteractionStatement;
     private PreparedStatement userByNameStatement;
     private PreparedStatement userByNameOrUuidStatement;
@@ -65,6 +66,7 @@ public final class RelationalConsumerWriteBatch implements ConsumerWriteBatch {
     private long[] duckDBBlockRowIds = EMPTY_ROW_IDS;
     private int duckDBBlockRowIdIndex;
     private int duckDBBlockIdReservationSize = INITIAL_DUCKDB_BLOCK_ID_RESERVATION;
+    private DuckDBSpatialIndex.Transaction duckDBSpatialIndex;
     private EntitySpawnStatement.Updates entitySpawnUpdates;
 
     public RelationalConsumerWriteBatch(Connection connection, DatabaseType databaseType) throws SQLException {
@@ -75,6 +77,9 @@ public final class RelationalConsumerWriteBatch implements ConsumerWriteBatch {
 
     @Override
     public void begin() throws Exception {
+        if (databaseType.isDuckDB()) {
+            duckDBSpatialIndex = DuckDBSpatialIndex.begin(connection, ConfigHandler.prefix);
+        }
         Database.beginTransaction(transactionStatement, databaseType);
     }
 
@@ -89,16 +94,25 @@ public final class RelationalConsumerWriteBatch implements ConsumerWriteBatch {
                         statement.executeBatch();
                     }
                 }
+                if (duckDBSpatialIndex != null) {
+                    duckDBSpatialIndex.flush(connection);
+                }
             }
             boolean committed = Database.commitTransactionChecked(transactionStatement, databaseType);
             if (!committed) {
                 boolean rolledBack = Database.rollbackTransaction(transactionStatement, databaseType);
+                duckDBSpatialIndex = null;
                 return acknowledgedRollback && rolledBack;
+            }
+            if (duckDBSpatialIndex != null) {
+                duckDBSpatialIndex.publish();
+                duckDBSpatialIndex = null;
             }
             return true;
         }
         catch (Exception exception) {
             Database.rollbackTransaction(transactionStatement, databaseType);
+            duckDBSpatialIndex = null;
             ErrorReporter.report(exception);
             return false;
         }
@@ -113,6 +127,7 @@ public final class RelationalConsumerWriteBatch implements ConsumerWriteBatch {
             ErrorReporter.report(exception);
         }
         Database.rollbackTransaction(transactionStatement, databaseType);
+        duckDBSpatialIndex = null;
     }
 
     @Override
@@ -265,7 +280,9 @@ public final class RelationalConsumerWriteBatch implements ConsumerWriteBatch {
             blockReturningStatement = own(required(Database.prepareStatement(connection, Database.BLOCK, true), "block insert"));
         }
         setBlock(blockReturningStatement, time, userId, worldId, x, y, z, type, data, meta, blockData, action, rolledBack);
-        return executeReturningId(blockReturningStatement, "block insert");
+        long rowId = executeReturningId(blockReturningStatement, "block insert");
+        trackDuckDBBlock(rowId, worldId, x, z);
+        return rowId;
     }
 
     @Override
@@ -295,6 +312,7 @@ public final class RelationalConsumerWriteBatch implements ConsumerWriteBatch {
         statement.setInt(11, action);
         statement.setInt(12, rolledBack);
         addBatch(statement, batchCount);
+        trackDuckDBGenerated("container", worldId, x, z);
     }
 
     @Override
@@ -314,6 +332,7 @@ public final class RelationalConsumerWriteBatch implements ConsumerWriteBatch {
         statement.setInt(12, action);
         statement.setInt(13, rolledBack);
         addBatch(statement, batchCount);
+        trackDuckDBGenerated("entity_container", worldId, x, z, entitySpawnRowId);
     }
 
     @Override
@@ -331,6 +350,7 @@ public final class RelationalConsumerWriteBatch implements ConsumerWriteBatch {
         statement.setInt(10, action);
         statement.setInt(11, rolledBack);
         addBatch(statement, batchCount);
+        trackDuckDBGenerated("item", worldId, x, z);
     }
 
     @Override
@@ -338,6 +358,7 @@ public final class RelationalConsumerWriteBatch implements ConsumerWriteBatch {
         PreparedStatement statement = batchStatement(Database.CHAT, CHAT_BATCH);
         setMessage(statement, time, userId, worldId, x, y, z, message);
         addBatch(statement, batchCount);
+        trackDuckDBGenerated("chat", worldId, x, z);
     }
 
     @Override
@@ -345,6 +366,7 @@ public final class RelationalConsumerWriteBatch implements ConsumerWriteBatch {
         PreparedStatement statement = batchStatement(Database.COMMAND, COMMAND_BATCH);
         setMessage(statement, time, userId, worldId, x, y, z, message);
         addBatch(statement, batchCount);
+        trackDuckDBGenerated("command", worldId, x, z);
     }
 
     @Override
@@ -358,6 +380,7 @@ public final class RelationalConsumerWriteBatch implements ConsumerWriteBatch {
         statement.setInt(6, z);
         statement.setInt(7, action);
         addBatch(statement, batchCount);
+        trackDuckDBGenerated("session", worldId, x, z);
     }
 
     @Override
@@ -382,6 +405,7 @@ public final class RelationalConsumerWriteBatch implements ConsumerWriteBatch {
             statement.setString(13 + index, lines[index]);
         }
         addBatch(statement, batchCount);
+        trackDuckDBGenerated("sign", worldId, x, z);
     }
 
     @Override
@@ -390,7 +414,12 @@ public final class RelationalConsumerWriteBatch implements ConsumerWriteBatch {
             entityStatement = own(required(Database.prepareStatement(connection, Database.ENTITY, true), "entity insert"));
         }
         entityStatement.setInt(1, time);
-        entityStatement.setObject(2, data);
+        if (databaseType.isDuckDB()) {
+            setDuckDBEntityData(entityStatement, 2, data);
+        }
+        else {
+            entityStatement.setObject(2, data);
+        }
         return Math.toIntExact(executeReturningId(entityStatement, "entity insert"));
     }
 
@@ -411,7 +440,10 @@ public final class RelationalConsumerWriteBatch implements ConsumerWriteBatch {
         statement.setDouble(12, currentZ);
         statement.setFloat(13, yaw);
         statement.setFloat(14, pitch);
-        if (data == null) {
+        if (databaseType.isDuckDB()) {
+            setDuckDBEntityData(statement, 15, data);
+        }
+        else if (data == null) {
             statement.setNull(15, Types.BLOB);
         }
         else {
@@ -446,7 +478,7 @@ public final class RelationalConsumerWriteBatch implements ConsumerWriteBatch {
     }
 
     @Override
-    public void checkpointEntitySpawn(int trackingRowId, int worldId, double x, double y, double z, float yaw, float pitch) throws Exception {
+    public boolean checkpointEntitySpawn(int trackingRowId, int worldId, double x, double y, double z, float yaw, float pitch) throws Exception {
         if (entitySpawnCheckpointStatement == null) {
             entitySpawnCheckpointStatement = own(connection.prepareStatement("UPDATE " + ConfigHandler.prefix + "entity_spawn SET current_wid=?,x=?,y=?,z=?,yaw=?,pitch=? WHERE rowid=? AND removed=0"));
         }
@@ -457,8 +489,30 @@ public final class RelationalConsumerWriteBatch implements ConsumerWriteBatch {
         entitySpawnCheckpointStatement.setFloat(5, yaw);
         entitySpawnCheckpointStatement.setFloat(6, pitch);
         entitySpawnCheckpointStatement.setInt(7, trackingRowId);
-        if (entitySpawnCheckpointStatement.executeUpdate() != 1) {
-            throw new SQLException("Entity interaction could not checkpoint its tracking row");
+        int updated = entitySpawnCheckpointStatement.executeUpdate();
+        if (updated == 1) {
+            return true;
+        }
+        if (updated > 1) {
+            throw new SQLException("Entity interaction tracking row is ambiguous: " + trackingRowId);
+        }
+
+        if (entitySpawnCheckpointStateStatement == null) {
+            entitySpawnCheckpointStateStatement = own(connection.prepareStatement("SELECT removed FROM " + ConfigHandler.prefix + "entity_spawn WHERE rowid=?"));
+        }
+        entitySpawnCheckpointStateStatement.setInt(1, trackingRowId);
+        try (ResultSet resultSet = entitySpawnCheckpointStateStatement.executeQuery()) {
+            if (!resultSet.next()) {
+                throw new SQLException("Entity interaction tracking row is missing: " + trackingRowId);
+            }
+            int removed = resultSet.getInt("removed");
+            if (resultSet.wasNull() || (removed != 0 && removed != 1)) {
+                throw new SQLException("Entity interaction tracking row has invalid lifecycle state: " + trackingRowId);
+            }
+            if (resultSet.next()) {
+                throw new SQLException("Entity interaction tracking row is ambiguous: " + trackingRowId);
+            }
+            return removed == 0;
         }
     }
 
@@ -486,6 +540,7 @@ public final class RelationalConsumerWriteBatch implements ConsumerWriteBatch {
         if (entityInteractionStatement.executeUpdate() != 1) {
             throw new SQLException("Entity interaction insert did not insert one row");
         }
+        trackDuckDBGenerated("entity_interaction", worldId, x, z, entitySpawnRowId);
     }
 
     @Override
@@ -496,7 +551,7 @@ public final class RelationalConsumerWriteBatch implements ConsumerWriteBatch {
     @Override
     public ConsumerEntitySpawnUpdates entitySpawnUpdates() throws Exception {
         if (entitySpawnUpdates == null) {
-            entitySpawnUpdates = new EntitySpawnStatement.Updates(connection);
+            entitySpawnUpdates = new EntitySpawnStatement.Updates(connection, this, databaseType);
         }
         return entitySpawnUpdates;
     }
@@ -552,6 +607,15 @@ public final class RelationalConsumerWriteBatch implements ConsumerWriteBatch {
             entitySpawnStatement = own(prepare(sql, true));
         }
         return entitySpawnStatement;
+    }
+
+    private static void setDuckDBEntityData(PreparedStatement statement, int index, byte[] data) throws SQLException {
+        if (data == null) {
+            statement.setNull(index, Types.BLOB);
+        }
+        else {
+            statement.setBytes(index, data);
+        }
     }
 
     private PreparedStatement userByNameStatement() throws SQLException {
@@ -627,6 +691,23 @@ public final class RelationalConsumerWriteBatch implements ConsumerWriteBatch {
         duckDBBlockAppender.append((byte) action)
                 .append((byte) rolledBack)
                 .endRow();
+        trackDuckDBBlock(rowId, worldId, x, z);
+    }
+
+    private void trackDuckDBBlock(long rowId, int worldId, int x, int z) throws SQLException {
+        if (duckDBSpatialIndex != null) {
+            duckDBSpatialIndex.addBlock(rowId, worldId, x, z);
+        }
+    }
+
+    private void trackDuckDBGenerated(String table, int worldId, int x, int z) {
+        trackDuckDBGenerated(table, worldId, x, z, null);
+    }
+
+    private void trackDuckDBGenerated(String table, int worldId, int x, int z, Integer entitySpawnRowId) {
+        if (duckDBSpatialIndex != null) {
+            duckDBSpatialIndex.addGenerated(table, worldId, x, z, entitySpawnRowId);
+        }
     }
 
     private long nextDuckDBBlockRowId() throws SQLException {

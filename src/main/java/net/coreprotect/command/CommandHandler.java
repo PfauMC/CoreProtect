@@ -61,7 +61,7 @@ public class CommandHandler implements CommandExecutor {
                     else if (user.hasPermission("coreprotect.lookup.near") && corecommand.equals("near")) {
                         permission = true;
                     }
-                    else if (user.hasPermission("coreprotect.teleport") && (corecommand.equals("tp") || corecommand.equals("teleport"))) {
+                    else if ((user.hasPermission("coreprotect.teleport") || user.hasPermission("coreprotect.teleport.spectator")) && (corecommand.equals("tp") || corecommand.equals("teleport"))) {
                         permission = true;
                     }
                     else if (user.hasPermission("coreprotect.reload") && corecommand.equals("reload")) {

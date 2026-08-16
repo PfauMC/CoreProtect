@@ -52,6 +52,7 @@ permissions:
             coreprotect.lookup.kill: true
             coreprotect.lookup.spawn: true
             coreprotect.teleport: true
+            coreprotect.teleport.spectator: false
             coreprotect.reload: true
             coreprotect.status: true
             coreprotect.consumer: true
@@ -140,6 +141,9 @@ permissions:
     coreprotect.teleport:
         description: Has permission to use the teleport command
         default: op
+    coreprotect.teleport.spectator:
+        description: Has permission to use the teleport command while in spectator mode
+        default: false
     coreprotect.reload:
         description: Has permission to use the reload command
         default: op

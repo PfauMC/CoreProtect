@@ -249,6 +249,7 @@ public class Language {
         phrases.put(Phrase.TELEPORTED, "Teleported to {0}.");
         phrases.put(Phrase.TELEPORTED_SAFETY, "Teleported you to safety.");
         phrases.put(Phrase.TELEPORT_PLAYERS, "Teleport command can only be used by players.");
+        phrases.put(Phrase.TELEPORT_SPECTATOR_ONLY, "Teleport command can only be used in spectator mode.");
         phrases.put(Phrase.TIME_DAYS, "{0} {day|days}");
         phrases.put(Phrase.TIME_HOURS, "{0} {hour|hours}");
         phrases.put(Phrase.TIME_MINUTES, "{0} {minute|minutes}");

@@ -74,12 +74,14 @@ import net.coreprotect.CoreProtect;
 import net.coreprotect.bukkit.BukkitAdapter;
 import net.coreprotect.config.Config;
 import net.coreprotect.consumer.Queue;
+import net.coreprotect.listener.player.EntityInteractionListener;
 import net.coreprotect.paper.PaperAdapter;
 import net.coreprotect.spigot.SpigotAdapter;
 import net.coreprotect.thread.CacheHandler;
 import net.coreprotect.thread.Scheduler;
-import net.coreprotect.utility.serialize.ItemMetaHandler;
 import net.coreprotect.utility.EntitySpawnTracking;
+import net.coreprotect.utility.entity.LivingEntityDetails;
+import net.coreprotect.utility.serialize.ItemMetaHandler;
 
 public final class EntityDeathListener extends Queue implements Listener {
 
@@ -291,13 +293,9 @@ public final class EntityDeathListener extends Queue implements Listener {
             List<Object> age = new ArrayList<>();
             List<Object> tame = new ArrayList<>();
             List<Object> attributes = new ArrayList<>();
-            List<Object> details = new ArrayList<>();
+            List<Object> details = LivingEntityDetails.serialize(entity);
             List<Object> info = new ArrayList<>();
             EntityType type = entity_type;
-
-            // Basic LivingEntity attributes
-            details.add(entity.getRemoveWhenFarAway());
-            details.add(entity.getCanPickupItems());
 
             if (entity instanceof Ageable) {
                 Ageable ageable = (Ageable) entity;
@@ -305,7 +303,6 @@ public final class EntityDeathListener extends Queue implements Listener {
                 age.add(ageable.getAgeLock());
                 age.add(ageable.isAdult());
                 age.add(ageable.canBreed());
-                age.add(null);
             }
 
             if (entity instanceof Tameable) {
@@ -332,7 +329,9 @@ public final class EntityDeathListener extends Queue implements Listener {
                             attributeModifiers.add(modifier.serialize());
                         }
 
-                        attributeData.add(attributeModifiers);
+                        if (!attributeModifiers.isEmpty()) {
+                            attributeData.add(attributeModifiers);
+                        }
                         attributes.add(attributeData);
                     }
                 }
@@ -375,6 +374,8 @@ public final class EntityDeathListener extends Queue implements Listener {
             else if (entity instanceof Pig) {
                 Pig pig = (Pig) entity;
                 info.add(pig.hasSaddle());
+                BukkitAdapter.ADAPTER.getEntityMeta(entity, info);
+                PaperAdapter.ADAPTER.getEntityMeta(entity, info);
             }
             else if (entity instanceof Sheep) {
                 Sheep sheep = (Sheep) entity;
@@ -567,8 +568,10 @@ public final class EntityDeathListener extends Queue implements Listener {
             }
             else {
                 BukkitAdapter.ADAPTER.getEntityMeta(entity, info);
+                PaperAdapter.ADAPTER.getEntityMeta(entity, info);
             }
 
+            trimTrailingNulls(info);
             data.add(age);
             data.add(tame);
             data.add(info);
@@ -586,6 +589,12 @@ public final class EntityDeathListener extends Queue implements Listener {
             else {
                 Queue.queuePlayerKill(e, entity.getLocation(), entity.getName());
             }
+        }
+    }
+
+    private static void trimTrailingNulls(List<Object> values) {
+        while (!values.isEmpty() && values.get(values.size() - 1) == null) {
+            values.remove(values.size() - 1);
         }
     }
 
@@ -654,9 +663,10 @@ public final class EntityDeathListener extends Queue implements Listener {
             return;
         }
 
-        if (EntitySpawnTracking.isTracked(entity)) {
-            Queue.queueEntitySpawnRemoved(entity.getUniqueId(), entity.getLocation());
-            EntitySpawnTracking.forget(entity.getUniqueId());
+        if (EntitySpawnTracking.isTrackedOrPendingIdentity(entity)) {
+            EntityInteractionListener.flushPendingInteractions(entity);
+            Queue.queueEntitySpawnRemoved(entity);
+            EntitySpawnTracking.clearTracking(entity.getUniqueId());
         }
 
         logEntityDeath(entity, null);
