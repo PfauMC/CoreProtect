@@ -131,7 +131,9 @@ public final class ArmorStandManipulateListener extends Queue implements Listene
         }
         // 0: BOOTS, 1: LEGGINGS, 2: CHESTPLATE, 3: HELMET, 4: MAINHAND, 5: OFFHAND
 
-        if (item.getType() == playerItem.getType()) {
+        // the full stacks are compared rather than the material: exchanging an item for a different
+        // one of the same type still moves items between the player and the armor stand
+        if (item.equals(playerItem)) {
             return;
         }
         else if (item.getType() != Material.AIR && playerItem.getType() == Material.AIR) {
