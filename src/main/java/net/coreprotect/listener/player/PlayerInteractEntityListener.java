@@ -5,6 +5,7 @@ import java.util.List;
 
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Creature;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.ItemFrame;
@@ -113,6 +114,24 @@ public final class PlayerInteractEntityListener extends Queue implements Listene
                     newState[0].setAmount(1); // never add more than 1 item to an item frame at once
                 }
                 queueContainerSpecifiedItems(player.getName(), Material.ITEM_FRAME, new Object[] { oldState, newState, frame.getFacing() }, frame.getLocation(), false);
+            }
+        }
+        else if (entity instanceof ArmorStand) {
+            // an armor stand slot that is empty, clicked with an empty hand, never fires
+            // PlayerArmorStandManipulateEvent, so its transactions are inspected here
+            if (Boolean.TRUE.equals(ConfigHandler.inspecting.get(player.getName()))) {
+                String playerUuid = player.getUniqueId().toString();
+                long now = System.currentTimeMillis();
+                Object[] previousInspection = PlayerInteractListener.lastInspectorEvent.get(playerUuid);
+                if (previousInspection == null || now - (long) previousInspection[0] >= 100L) {
+                    PlayerInteractListener.lastInspectorEvent.put(playerUuid, new Object[] { now, event.getHand() });
+                    if (BlockGroup.CONTAINERS.contains(Material.ARMOR_STAND)) {
+                        // logged armor stand items
+                        ArmorStandManipulateListener.inspectHangingTransactions(entity.getLocation(), player);
+                    }
+                }
+
+                event.setCancelled(true);
             }
         }
         else if (Boolean.TRUE.equals(ConfigHandler.inspecting.get(player.getName()))) {
