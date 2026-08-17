@@ -65,7 +65,8 @@ public final class EntityDamageByEntityListener extends Queue implements Listene
                                 entityLocation.setY(entityLocation.getY() + 0.99);
                             }
 
-                            HangingBreakByEntityListener.inspectItemFrame(entityLocation.getBlock().getState(), player);
+                            Location transactionLocation = entity instanceof EnderCrystal ? null : entity.getLocation();
+                            HangingBreakByEntityListener.inspectItemFrame(entityLocation.getBlock().getState(), player, transactionLocation);
                             event.setCancelled(true);
                             inspecting = true;
                         }
