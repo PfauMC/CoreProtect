@@ -61,12 +61,8 @@ public final class EntityDamageByEntityListener extends Queue implements Listene
 
                     if (ConfigHandler.inspecting.get(player.getName()) != null) {
                         if (ConfigHandler.inspecting.get(player.getName())) {
-                            if (entity instanceof ArmorStand) {
-                                entityLocation.setY(entityLocation.getY() + 0.99);
-                            }
-
-                            Location transactionLocation = entity instanceof EnderCrystal ? null : entity.getLocation();
-                            HangingBreakByEntityListener.inspectItemFrame(entityLocation.getBlock().getState(), player, transactionLocation);
+                            Location transactionLocation = entity instanceof EnderCrystal ? null : entityLocation;
+                            HangingBreakByEntityListener.inspectItemFrame(block.getState(), player, transactionLocation);
                             event.setCancelled(true);
                             inspecting = true;
                         }
