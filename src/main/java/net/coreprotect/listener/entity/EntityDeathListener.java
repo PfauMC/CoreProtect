@@ -238,7 +238,6 @@ public final class EntityDeathListener extends Queue implements Listener {
         if (entity instanceof ArmorStand) {
             Location entityLocation = entity.getLocation();
             if (!Config.getConfig(entityLocation.getWorld()).ITEM_TRANSACTIONS) {
-                entityLocation.setY(entityLocation.getY() + 0.99);
                 Block block = entityLocation.getBlock();
                 Queue.queueBlockBreak(e, block.getState(), Material.ARMOR_STAND, null, (int) entityLocation.getYaw());
             }
