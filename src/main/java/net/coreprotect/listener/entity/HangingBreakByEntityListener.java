@@ -2,9 +2,11 @@ package net.coreprotect.listener.entity;
 
 import java.sql.Connection;
 import java.sql.Statement;
+import java.util.List;
 import java.util.Locale;
 
 import org.bukkit.GameMode;
+import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.block.BlockState;
 import org.bukkit.entity.Entity;
@@ -23,6 +25,7 @@ import net.coreprotect.config.ConfigHandler;
 import net.coreprotect.consumer.Queue;
 import net.coreprotect.database.Database;
 import net.coreprotect.database.lookup.BlockLookup;
+import net.coreprotect.database.lookup.ChestTransactionLookup;
 import net.coreprotect.language.Phrase;
 import net.coreprotect.listener.player.PlayerInteractEntityListener;
 import net.coreprotect.utility.Chat;
@@ -33,6 +36,22 @@ import net.coreprotect.utility.ErrorReporter;
 public final class HangingBreakByEntityListener extends Queue implements Listener {
 
     static void inspectItemFrame(final BlockState block, final Player player) {
+        inspectItemFrame(block, player, null);
+    }
+
+    /**
+     * Displays the block history of a hanging entity, followed by the item transactions logged at
+     * transactionLocation when one is supplied. Both lookups run within a single thread, as the
+     * lookup throttle rejects a second inspection started while the first one is still running.
+     *
+     * @param block
+     *            the block state the hanging entity occupies
+     * @param player
+     *            the inspecting player
+     * @param transactionLocation
+     *            the location of the entity's item transactions, or null to only display block history
+     */
+    static void inspectItemFrame(final BlockState block, final Player player, final Location transactionLocation) {
         // block check
         class BasicThread implements Runnable {
             @Override
@@ -71,6 +90,13 @@ public final class HangingBreakByEntityListener extends Queue implements Listene
                         }
                         else if (blockData.length() > 0) {
                             Chat.sendComponent(player, blockData);
+                        }
+
+                        if (transactionLocation != null) {
+                            List<String> transactionData = ChestTransactionLookup.performLookup(null, statement, transactionLocation, player, 1, 7, true);
+                            for (String data : transactionData) {
+                                Chat.sendComponent(player, data);
+                            }
                         }
 
                         statement.close();
