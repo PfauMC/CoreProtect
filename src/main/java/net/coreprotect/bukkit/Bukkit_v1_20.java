@@ -227,6 +227,10 @@ public class Bukkit_v1_20 extends Bukkit_v1_19 {
 
             ChiseledBookshelf bookshelf = (ChiseledBookshelf) blockState;
             int slot = bookshelf.getSlot(event.getClickedPosition());
+            if (slot < 0) {
+                return null; // Click is outside of every slot, return null
+            }
+
             ItemStack book = bookshelf.getInventory().getItem(slot);
 
             return book == null ? new ItemStack(Material.AIR) : book;
