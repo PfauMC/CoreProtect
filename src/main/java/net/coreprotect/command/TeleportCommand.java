@@ -32,9 +32,10 @@ public class TeleportCommand {
             return;
         }
 
-        // "coreprotect.teleport.spectator" only grants the command while in spectator mode;
-        // "coreprotect.teleport" carries no such restriction and takes precedence when both are held.
-        if (!player.hasPermission("coreprotect.teleport") && ((Player) player).getGameMode() != GameMode.SPECTATOR) {
+        // "coreprotect.teleport.spectator" restricts the command to spectator mode and outranks
+        // "coreprotect.teleport", so holding the latter through op or "coreprotect.*" doesn't lift the
+        // restriction. Full access stays unrestricted: "coreprotect.*" lists this node as false.
+        if (player.hasPermission("coreprotect.teleport.spectator") && ((Player) player).getGameMode() != GameMode.SPECTATOR) {
             Chat.sendMessage(player, Color.DARK_AQUA + "CoreProtect " + Color.WHITE + "- " + Phrase.build(Phrase.TELEPORT_SPECTATOR_ONLY));
             return;
         }
